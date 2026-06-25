@@ -47,7 +47,7 @@ public class LoginControllerTests
     }
 
     [Fact]
-    public async Task LoginLocal_ShouldReturnOkWithToken_WhenCredentialsAreValid()
+    public async Task Login_ShouldReturnOkWithToken_WhenCredentialsAreValid()
     {
         // Arrange
         var model = new LoginVm { Email = "test@example.com", Password = "ValidPassword123" };
@@ -71,7 +71,7 @@ public class LoginControllerTests
             .Returns(true);
 
         // Act
-        var result = await _controller.LoginLocal(model, CancellationToken.None);
+        var result = await _controller.Login(model, CancellationToken.None);
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
@@ -82,7 +82,7 @@ public class LoginControllerTests
     }
 
     [Fact]
-    public async Task LoginLocal_ShouldReturnUnauthorized_WhenUserNotFound()
+    public async Task Login_ShouldReturnUnauthorized_WhenUserNotFound()
     {
         // Arrange
         var model = new LoginVm { Email = "nonexistent@example.com", Password = "Password123" };
@@ -95,7 +95,7 @@ public class LoginControllerTests
             .ReturnsAsync((User)null!);
 
         // Act
-        var result = await _controller.LoginLocal(model, CancellationToken.None);
+        var result = await _controller.Login(model, CancellationToken.None);
 
         // Assert
         var unauthorizedResult = Assert.IsType<UnauthorizedObjectResult>(result);
@@ -103,7 +103,7 @@ public class LoginControllerTests
     }
 
     [Fact]
-    public async Task LoginLocal_ShouldReturnUnauthorized_WhenPasswordIsIncorrect()
+    public async Task Login_ShouldReturnUnauthorized_WhenPasswordIsIncorrect()
     {
         // Arrange
         var model = new LoginVm { Email = "test@example.com", Password = "WrongPassword" };
@@ -121,7 +121,7 @@ public class LoginControllerTests
             .Returns(false);
 
         // Act
-        var result = await _controller.LoginLocal(model, CancellationToken.None);
+        var result = await _controller.Login(model, CancellationToken.None);
 
         // Assert
         var unauthorizedResult = Assert.IsType<UnauthorizedObjectResult>(result);
