@@ -1,10 +1,7 @@
 using HorreumStack.Identity.Controllers;
 using HorreumStack.Infrastructure.Persistence;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System;
-using System.Threading.Tasks;
 using Xunit;
 
 namespace HorreumStack.Identity.Tests.Controllers;

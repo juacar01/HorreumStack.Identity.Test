@@ -2,17 +2,15 @@ using HorreumStack.Domain.Entities;
 using HorreumStack.Identity.Controllers;
 using HorreumStack.Identity.Core.Application.Features.Login;
 using HorreumStack.Identity.Core.Application.Features.Register;
+using HorreumStack.Identity.Core.Application.Features.Users;
 using HorreumStack.Infrastructure.Repositories;
 using HorreumStack.Utilities.Security;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Moq;
-using System;
-using System.Collections.Generic;
 using System.Linq.Expressions;
-using System.Threading;
-using System.Threading.Tasks;
 using Xunit;
 
 namespace HorreumStack.Identity.Tests.Controllers;
@@ -24,6 +22,8 @@ public class AuthControllerTests
     private readonly Mock<IConfiguration> _configurationMock;
     private readonly Mock<IPasswordHasher> _passwordHasherMock;
     private readonly Mock<IRegisterService> _registerServiceMock;
+    private readonly Mock<IUserService> _userServiceMock;
+    private readonly Mock<IWebHostEnvironment> _webHostEnvironmentMock;
     private readonly AuthController _controller;
 
     public AuthControllerTests()
@@ -33,6 +33,8 @@ public class AuthControllerTests
         _configurationMock = new Mock<IConfiguration>();
         _passwordHasherMock = new Mock<IPasswordHasher>();
         _registerServiceMock = new Mock<IRegisterService>();
+        _userServiceMock = new Mock<IUserService>();
+        _webHostEnvironmentMock = new Mock<IWebHostEnvironment>();
 
         _unitOfWorkMock.Setup(u => u.Repository<User>()).Returns(_userRepositoryMock.Object);
 
@@ -46,7 +48,9 @@ public class AuthControllerTests
             _unitOfWorkMock.Object,
             _configurationMock.Object,
             _passwordHasherMock.Object,
-            _registerServiceMock.Object
+            _registerServiceMock.Object,
+            _userServiceMock.Object,
+            _webHostEnvironmentMock.Object
         );
 
         // Configurar un HttpContext simulado por defecto para evitar NullReferenceException con las Cookies
@@ -69,13 +73,17 @@ public class AuthControllerTests
             Username = "testuser",
             PasswordHash = "hashed_password"
         };
+        var userVm = new UserVm
+        {
+            Id = user.Id,
+            Email = user.Email,
+            UserName = user.Username,
+            PasswordHash = user.PasswordHash
+        };
 
-        _userRepositoryMock
-            .Setup(r => r.GetEntityAsync(
-                It.IsAny<Expression<Func<User, bool>>>(),
-                It.IsAny<List<Expression<Func<User, object>>>>(),
-                It.IsAny<bool>()))
-            .ReturnsAsync(user);
+        _userServiceMock
+            .Setup(s => s.GetUserByEmailAsync(model.Email, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(userVm);
 
         _passwordHasherMock
             .Setup(h => h.VerifyPassword(model.Password, user.PasswordHash))
@@ -88,7 +96,7 @@ public class AuthControllerTests
         var okResult = Assert.IsType<OkObjectResult>(result);
         dynamic val = okResult.Value!;
         Assert.Equal(model.Email, (string)val.GetType().GetProperty("Email").GetValue(val));
-        Assert.Equal(user.Username, (string)val.GetType().GetProperty("Username").GetValue(val));
+        Assert.Equal(userVm.UserName, (string)val.GetType().GetProperty("Username").GetValue(val));
 
         // Verificar que la cookie fue añadida
         var setCookieHeader = _controller.HttpContext.Response.Headers["Set-Cookie"].ToString();
@@ -121,14 +129,12 @@ public class AuthControllerTests
     {
         // Arrange
         var model = new LoginVm { Email = "test@example.com", Password = "WrongPassword" };
-        var user = new User { Email = model.Email, PasswordHash = "hashed_password" };
+        var user = new User { Id = Guid.NewGuid(), Email = model.Email, PasswordHash = "hashed_password", Username = "testuser" };
+        var userVm = new UserVm { Id = user.Id, Email = user.Email, PasswordHash = user.PasswordHash, UserName = user.Username };
 
-        _userRepositoryMock
-            .Setup(r => r.GetEntityAsync(
-                It.IsAny<Expression<Func<User, bool>>>(),
-                It.IsAny<List<Expression<Func<User, object>>>>(),
-                It.IsAny<bool>()))
-            .ReturnsAsync(user);
+        _userServiceMock
+            .Setup(s => s.GetUserByEmailAsync(model.Email, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(userVm);
 
         _passwordHasherMock
             .Setup(h => h.VerifyPassword(model.Password, user.PasswordHash))
@@ -245,6 +251,12 @@ public class AuthControllerTests
             Email = "test@example.com",
             Username = "testuser"
         };
+        var userVm = new UserVm
+        {
+            Id = userId,
+            Email = user.Email,
+            UserName = user.Username
+        };
 
         var token = JwtHelper.GenerateToken(
             userId.ToString(),
@@ -263,12 +275,9 @@ public class AuthControllerTests
             HttpContext = httpContext
         };
 
-        _userRepositoryMock
-            .Setup(r => r.GetEntityAsync(
-                It.IsAny<Expression<Func<User, bool>>>(),
-                It.IsAny<List<Expression<Func<User, object>>>>(),
-                It.IsAny<bool>()))
-            .ReturnsAsync(user);
+        _userServiceMock
+            .Setup(s => s.GetUserByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(userVm);
 
 
         // Act
@@ -277,8 +286,8 @@ public class AuthControllerTests
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         dynamic val = okResult.Value!;
-        Assert.Equal(user.Email, (string)val.GetType().GetProperty("Email").GetValue(val));
-        Assert.Equal(user.Username, (string)val.GetType().GetProperty("Username").GetValue(val));
+        Assert.Equal(userVm.Email, (string)val.GetType().GetProperty("Email").GetValue(val));
+        Assert.Equal(userVm.UserName, (string)val.GetType().GetProperty("Username").GetValue(val));
 
         // Verificar que la nueva cookie fue añadida
         var setCookieHeader = _controller.HttpContext.Response.Headers["Set-Cookie"].ToString();
