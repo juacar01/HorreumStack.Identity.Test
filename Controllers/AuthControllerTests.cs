@@ -1,6 +1,7 @@
 using HorreumStack.Domain.Entities;
 using HorreumStack.Identity.Controllers;
 using HorreumStack.Identity.Core.Application.Features.Login;
+using HorreumStack.Identity.Core.Application.Features.Register;
 using HorreumStack.Infrastructure.Repositories;
 using HorreumStack.Utilities.Security;
 using Microsoft.AspNetCore.Http;
@@ -16,20 +17,22 @@ using Xunit;
 
 namespace HorreumStack.Identity.Tests.Controllers;
 
-public class LoginControllerTests
+public class AuthControllerTests
 {
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly Mock<IAsyncRepository<User>> _userRepositoryMock;
     private readonly Mock<IConfiguration> _configurationMock;
     private readonly Mock<IPasswordHasher> _passwordHasherMock;
-    private readonly LoginController _controller;
+    private readonly Mock<IRegisterService> _registerServiceMock;
+    private readonly AuthController _controller;
 
-    public LoginControllerTests()
+    public AuthControllerTests()
     {
         _unitOfWorkMock = new Mock<IUnitOfWork>();
         _userRepositoryMock = new Mock<IAsyncRepository<User>>();
         _configurationMock = new Mock<IConfiguration>();
         _passwordHasherMock = new Mock<IPasswordHasher>();
+        _registerServiceMock = new Mock<IRegisterService>();
 
         _unitOfWorkMock.Setup(u => u.Repository<User>()).Returns(_userRepositoryMock.Object);
 
@@ -39,11 +42,19 @@ public class LoginControllerTests
         _configurationMock.Setup(c => c["Jwt:Audience"]).Returns("HorreumStack.Clients.Test");
         _configurationMock.Setup(c => c["Jwt:ExpirationMinutes"]).Returns("60");
 
-        _controller = new LoginController(
+        _controller = new AuthController(
             _unitOfWorkMock.Object,
             _configurationMock.Object,
-            _passwordHasherMock.Object
+            _passwordHasherMock.Object,
+            _registerServiceMock.Object
         );
+
+        // Configurar un HttpContext simulado por defecto para evitar NullReferenceException con las Cookies
+        var httpContext = new DefaultHttpContext();
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = httpContext
+        };
     }
 
     [Fact]
@@ -76,9 +87,12 @@ public class LoginControllerTests
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         dynamic val = okResult.Value!;
-        Assert.NotNull(val.GetType().GetProperty("Token").GetValue(val));
         Assert.Equal(model.Email, (string)val.GetType().GetProperty("Email").GetValue(val));
         Assert.Equal(user.Username, (string)val.GetType().GetProperty("Username").GetValue(val));
+
+        // Verificar que la cookie fue añadida
+        var setCookieHeader = _controller.HttpContext.Response.Headers["Set-Cookie"].ToString();
+        Assert.Contains("AuthToken=", setCookieHeader);
     }
 
     [Fact]
@@ -129,6 +143,50 @@ public class LoginControllerTests
     }
 
     [Fact]
+    public async Task Register_ShouldReturnOkWithResult_WhenModelIsValid()
+    {
+        // Arrange
+        var model = new RegisterVm
+        {
+            Nombre = "John",
+            Apellidos = "Doe",
+            Email = "john.doe@example.com",
+            Password = "SecurePassword123!"
+        };
+
+        var expectedResult = new RegisterVm
+        {
+            Nombre = model.Nombre,
+            Apellidos = model.Apellidos,
+            Email = model.Email
+        };
+
+        _registerServiceMock
+            .Setup(s => s.RegisterAsync(model, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expectedResult);
+
+        // Act
+        var result = await _controller.Register(model, CancellationToken.None);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var returnedVal = Assert.IsType<RegisterVm>(okResult.Value);
+        Assert.Equal(expectedResult.Email, returnedVal.Email);
+        Assert.Equal(expectedResult.Nombre, returnedVal.Nombre);
+    }
+
+    [Fact]
+    public async Task Register_ShouldReturnBadRequest_WhenModelIsNull()
+    {
+        // Act
+        var result = await _controller.Register(null!, CancellationToken.None);
+
+        // Assert
+        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("Datos inválidos.", badRequestResult.Value);
+    }
+
+    [Fact]
     public async Task ValidateToken_ShouldReturnOkWithClaims_WhenTokenIsValid()
     {
         // Arrange
@@ -171,5 +229,93 @@ public class LoginControllerTests
         dynamic val = badResult.Value!;
         Assert.False((bool)val.GetType().GetProperty("Valid").GetValue(val));
         Assert.Equal("Token inválido o expirado.", (string)val.GetType().GetProperty("Message").GetValue(val));
+    }
+
+    [Fact]
+    public async Task RefreshToken_ShouldReturnOkWithNewToken_WhenTokenIsValidOrExpired()
+    {
+        // Arrange
+        var secretKey = "ThisIsATestSecretKeyForJwtAuthentication32BytesOrLonger";
+        var issuer = "HorreumStack.Identity.Test";
+        var audience = "HorreumStack.Clients.Test";
+        var userId = Guid.NewGuid();
+        var user = new User
+        {
+            Id = userId,
+            Email = "test@example.com",
+            Username = "testuser"
+        };
+
+        var token = JwtHelper.GenerateToken(
+            userId.ToString(),
+            user.Email,
+            user.Username,
+            secretKey,
+            issuer,
+            audience,
+            30
+        );
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = httpContext
+        };
+
+        _userRepositoryMock
+            .Setup(r => r.GetEntityAsync(
+                It.IsAny<Expression<Func<User, bool>>>(),
+                It.IsAny<List<Expression<Func<User, object>>>>(),
+                It.IsAny<bool>()))
+            .ReturnsAsync(user);
+
+
+        // Act
+        var result = await _controller.RefreshToken();
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        dynamic val = okResult.Value!;
+        Assert.Equal(user.Email, (string)val.GetType().GetProperty("Email").GetValue(val));
+        Assert.Equal(user.Username, (string)val.GetType().GetProperty("Username").GetValue(val));
+
+        // Verificar que la nueva cookie fue añadida
+        var setCookieHeader = _controller.HttpContext.Response.Headers["Set-Cookie"].ToString();
+        Assert.Contains("AuthToken=", setCookieHeader);
+    }
+
+    [Fact]
+    public async Task RefreshToken_ShouldReturnBadRequest_WhenAuthorizationHeaderIsMissing()
+    {
+        // Arrange
+        var httpContext = new DefaultHttpContext();
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = httpContext
+        };
+
+        // Act
+        var result = await _controller.RefreshToken();
+
+        // Assert
+        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("Token de autenticación no provisto en cookies ni en cabecera.", badRequestResult.Value);
+    }
+
+    [Fact]
+    public void Logout_ShouldReturnOk_AndRemoveCookie()
+    {
+        // Act
+        var result = _controller.Logout();
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        dynamic val = okResult.Value!;
+        Assert.Equal("Sesión cerrada correctamente", (string)val.GetType().GetProperty("Message").GetValue(val));
+
+        // Verificar que la cookie fue eliminada
+        var setCookieHeader = _controller.HttpContext.Response.Headers["Set-Cookie"].ToString();
+        Assert.Contains("AuthToken=;", setCookieHeader);
     }
 }
