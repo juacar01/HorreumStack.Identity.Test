@@ -112,7 +112,7 @@ public class AuthControllerTests
         _userRepositoryMock
             .Setup(r => r.GetEntityAsync(
                 It.IsAny<Expression<Func<User, bool>>>(),
-                null,
+                It.IsAny<List<Expression<Func<User, object>>>>(),
                 true))
             .ReturnsAsync((User)null!);
 
